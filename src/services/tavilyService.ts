@@ -1,6 +1,6 @@
-import type { Brand, Product } from '../types';
+import type { Brand, Product, AnalysisProgress } from '../types';
 
-const TAVILY_API_KEY = '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';
+const TAVILY_API_KEY = import.meta.env.VITE_TAVILY_API_KEY || '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';
 const TAVILY_API_URL = 'https://api.tavily.com/search';
 const TAVILY_CRAWL_URL = 'https://api.tavily.com/crawl';
 
@@ -29,6 +29,35 @@ export interface TavilyCrawlResponse {
 }
 
 class TavilyService {
+  private progressCallback?: (progress: AnalysisProgress) => void;
+
+  setProgressCallback(callback: (progress: AnalysisProgress) => void) {
+    this.progressCallback = callback;
+  }
+
+  private emitProgress(progress: Partial<AnalysisProgress>) {
+    if (this.progressCallback) {
+      const defaultProgress: AnalysisProgress = {
+        status: 'idle',
+        currentStep: '',
+        progress: 0,
+        brand1Progress: 0,
+        brand2Progress: 0,
+        brandsFound: 0,
+        totalBrandsExpected: 10,
+        brand1ProductsFound: 0,
+        brand2ProductsFound: 0,
+        steps: {
+          brandDiscovery: { status: 'pending', brandsFound: 0, message: 'Waiting to start...' },
+          brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting to start...' },
+          brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting to start...' }
+        }
+      };
+      
+      this.progressCallback({ ...defaultProgress, ...progress });
+    }
+  }
+
   private async crawlTavily(url: string, instructions: string): Promise<TavilyCrawlResponse> {
     try {
       const response = await fetch(TAVILY_CRAWL_URL, {
@@ -93,9 +122,112 @@ class TavilyService {
     }
   }
 
-  async discoverBrands(storeUrl: string): Promise<Brand[]> {
+  async getTopAutomotiveBrands(): Promise<Brand[]> {
     try {
+      console.log('Getting top 20 automotive spare parts brands...');
+      
+      const response = await this.searchTavily(
+        "top 20 automotive spare parts brands manufacturers OEM aftermarket Bosch Continental Mahle Valeo Denso ZF TRW Brembo ATE Sachs Febi Bilstein Mann-Filter Pierburg Hella"
+      );
+
+      console.log('Tavily response for top brands:', response);
+
+      // Extract brand names from the response
+      const brandNames = this.extractBrandNames(response.answer + ' ' + response.results.map(r => r.content).join(' '));
+      
+      // Create brand objects
+      const brands: Brand[] = brandNames.map((name, index) => ({
+        id: `brand_${index + 1}`,
+        name: name,
+        description: `Leading automotive parts manufacturer`,
+        productCount: 0,
+        categories: []
+      }));
+
+      console.log('Extracted brands:', brands);
+      return brands;
+    } catch (error) {
+      console.error('Error getting top automotive brands:', error);
+      // Fallback to known automotive brands
+      return this.getFallbackAutomotiveBrands();
+    }
+  }
+
+  private extractBrandNames(text: string): string[] {
+    // Known automotive brands to look for
+    const knownBrands = [
+      'Bosch', 'Continental', 'Mahle', 'Valeo', 'Denso', 'ZF', 'TRW', 'Brembo', 
+      'ATE', 'Sachs', 'Febi Bilstein', 'Mann-Filter', 'Pierburg', 'Hella',
+      'Delphi', 'Gates', 'SKF', 'FAG', 'INA', 'LuK', 'Schaeffler', 'Dayco',
+      'Lemförder', 'Meyle', 'Swag', 'Corteco', 'Elring', 'Reinz', 'Victor Reinz',
+      'Bilstein', 'Monroe', 'KYB', 'Optimal', 'Febi', 'Blue Print'
+    ];
+
+    const foundBrands: string[] = [];
+    const textUpper = text.toUpperCase();
+
+    for (const brand of knownBrands) {
+      if (textUpper.includes(brand.toUpperCase()) && !foundBrands.includes(brand)) {
+        foundBrands.push(brand);
+      }
+    }
+
+    // If we found less than 10 brands, add some common ones
+    if (foundBrands.length < 10) {
+      const additionalBrands = ['Bosch', 'Continental', 'Mahle', 'Valeo', 'Denso', 'ZF', 'Brembo', 'ATE', 'Sachs', 'Hella'];
+      for (const brand of additionalBrands) {
+        if (!foundBrands.includes(brand)) {
+          foundBrands.push(brand);
+        }
+      }
+    }
+
+    return foundBrands.slice(0, 20); // Return top 20
+  }
+
+  private getFallbackAutomotiveBrands(): Brand[] {
+    const fallbackBrands = [
+      'Bosch', 'Continental', 'Mahle', 'Valeo', 'Denso', 'ZF', 'TRW', 'Brembo',
+      'ATE', 'Sachs', 'Febi Bilstein', 'Mann-Filter', 'Pierburg', 'Hella',
+      'Delphi', 'Gates', 'SKF', 'LuK', 'Dayco', 'Lemförder'
+    ];
+
+    return fallbackBrands.map((name, index) => ({
+      id: `brand_${index + 1}`,
+      name: name,
+      description: `Leading automotive parts manufacturer`,
+      productCount: 0,
+      categories: []
+    }));
+  }
+
+  async discoverBrandsDeepDive(storeUrl: string): Promise<Brand[]> {
+    try {
+      // Emit initial progress
+      this.emitProgress({
+        status: 'discovering-brands',
+        currentStep: 'Starting brand discovery...',
+        progress: 10,
+        steps: {
+          brandDiscovery: { status: 'in-progress', brandsFound: 0, message: 'Starting deep crawl of automotive marketplace (this may take 30-60 seconds)...' },
+          brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' },
+          brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' }
+        }
+      });
+
       console.log('Discovering brands using Tavily crawl for:', storeUrl);
+      
+      // Update progress - starting crawl
+      this.emitProgress({
+        status: 'discovering-brands',
+        currentStep: 'Crawling website for brand information...',
+        progress: 20,
+        steps: {
+          brandDiscovery: { status: 'in-progress', brandsFound: 0, message: 'Crawling thousands of pages to discover automotive brands...' },
+          brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' },
+          brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' }
+        }
+      });
       
       // Use Tavily crawl to get comprehensive brand data
       const crawlResponse = await this.crawlTavily(
@@ -105,9 +237,38 @@ class TavilyService {
       
       console.log('Tavily crawl response received:', crawlResponse);
 
+      // Update progress - processing results
+      this.emitProgress({
+        status: 'discovering-brands',
+        currentStep: 'Processing crawl results...',
+        progress: 40,
+        steps: {
+          brandDiscovery: { status: 'in-progress', brandsFound: 0, message: 'Analyzing massive dataset to extract automotive brands...' },
+          brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' },
+          brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' }
+        }
+      });
+
       // Extract brand names from the crawled content
       const brandNames = this.extractBrandNamesFromCrawl(crawlResponse);
       console.log('Extracted brand names from crawl:', brandNames);
+      
+      // Update progress with found brands
+      this.emitProgress({
+        status: 'discovering-brands',
+        currentStep: `Found ${brandNames.length} brands`,
+        progress: 60,
+        brandsFound: brandNames.length,
+        steps: {
+          brandDiscovery: { 
+            status: brandNames.length > 0 ? 'completed' : 'in-progress', 
+            brandsFound: brandNames.length, 
+            message: brandNames.length > 0 ? `Successfully found ${brandNames.length} brands` : 'No brands found, trying fallback method...'
+          },
+          brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' },
+          brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' }
+        }
+      });
       
       // If we found brands, convert to Brand objects
       if (brandNames.length > 0) {
@@ -119,14 +280,55 @@ class TavilyService {
           categories: this.getRandomCategories()
         }));
 
+        // Final progress update for brand discovery
+        this.emitProgress({
+          status: 'discovering-brands',
+          currentStep: `Brand discovery completed - ${brands.length} brands ready`,
+          progress: 80,
+          brandsFound: brands.length,
+          steps: {
+            brandDiscovery: { 
+              status: 'completed', 
+              brandsFound: brands.length, 
+              message: `Successfully discovered ${brands.length} automotive brands`
+            },
+            brand1Analysis: { status: 'pending', productsFound: 0, message: 'Ready to analyze products...' },
+            brand2Analysis: { status: 'pending', productsFound: 0, message: 'Ready to analyze products...' }
+          }
+        });
+
         return brands;
       } else {
         // Fallback to search method if crawl doesn't yield results
         console.log('No brands found in crawl results, trying search method');
+        
+        this.emitProgress({
+          status: 'discovering-brands',
+          currentStep: 'Trying alternative search method...',
+          progress: 50,
+          steps: {
+            brandDiscovery: { status: 'in-progress', brandsFound: 0, message: 'Crawl method failed, trying search fallback...' },
+            brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' },
+            brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' }
+          }
+        });
+        
         return await this.discoverBrandsWithSearch(storeUrl);
       }
     } catch (error) {
       console.error('Error discovering brands with crawl:', error);
+      
+      this.emitProgress({
+        status: 'discovering-brands',
+        currentStep: 'Crawl failed, trying search method...',
+        progress: 30,
+        steps: {
+          brandDiscovery: { status: 'in-progress', brandsFound: 0, message: 'Crawl method encountered error, trying search fallback...' },
+          brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' },
+          brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' }
+        }
+      });
+      
       // Fallback to search method if crawl fails
       return await this.discoverBrandsWithSearch(storeUrl);
     }
@@ -144,7 +346,7 @@ class TavilyService {
       console.log('Tavily response received:', response);
 
       // Extract brand names from the search results
-      const brandNames = this.extractBrandNames(response.results);
+      const brandNames = this.extractBrandNamesFromResults(response.results);
       console.log('Extracted brand names:', brandNames);
       
       // If we found brands, convert to Brand objects
@@ -215,7 +417,7 @@ class TavilyService {
     return Array.from(brandNames).slice(0, 15); // Limit to 15 brands
   }
 
-  private extractBrandNames(results: TavilySearchResult[]): string[] {
+  private extractBrandNamesFromResults(results: TavilySearchResult[]): string[] {
     // Common automotive brand patterns
     const knownBrands = [
       'Bosch', 'Continental', 'Valeo', 'MAHLE', 'SACHS', 'febi bilstein',
@@ -286,9 +488,54 @@ class TavilyService {
     }));
   }
 
-  async searchProducts(brandName: string, storeUrl: string, category?: string): Promise<Product[]> {
+  async searchProducts(brandName: string, storeUrl: string, category?: string, isBrand1: boolean = true): Promise<Product[]> {
     try {
+      const statusKey = isBrand1 ? 'analyzing-brand1' : 'analyzing-brand2';
+      const progressBase = isBrand1 ? 80 : 90;
+      
+      // Emit initial progress for product analysis
+      this.emitProgress({
+        status: statusKey,
+        currentStep: `Starting product analysis for ${brandName}...`,
+        currentBrandBeingAnalyzed: brandName,
+        progress: progressBase,
+        steps: {
+          brandDiscovery: { status: 'completed', brandsFound: 0, message: 'Brand discovery completed' },
+          brand1Analysis: { 
+            status: isBrand1 ? 'in-progress' : 'pending', 
+            productsFound: 0, 
+            message: isBrand1 ? `Initializing product crawl for ${brandName}...` : 'Waiting for Brand 1 analysis...'
+          },
+          brand2Analysis: { 
+            status: isBrand1 ? 'pending' : 'in-progress', 
+            productsFound: 0, 
+            message: isBrand1 ? 'Waiting for Brand 1 analysis...' : `Initializing product crawl for ${brandName}...`
+          }
+        }
+      });
+
       console.log(`Searching products for brand: ${brandName} using Tavily crawl`);
+      
+      // Update progress - starting crawl
+      this.emitProgress({
+        status: statusKey,
+        currentStep: `Crawling ${brandName} product catalog...`,
+        currentBrandBeingAnalyzed: brandName,
+        progress: progressBase + 2,
+        steps: {
+          brandDiscovery: { status: 'completed', brandsFound: 0, message: 'Brand discovery completed' },
+          brand1Analysis: { 
+            status: isBrand1 ? 'in-progress' : 'pending', 
+            productsFound: 0, 
+            message: isBrand1 ? `Crawling website for ${brandName} products...` : 'Waiting for Brand 1 analysis...'
+          },
+          brand2Analysis: { 
+            status: isBrand1 ? 'pending' : 'in-progress', 
+            productsFound: 0, 
+            message: isBrand1 ? 'Waiting for Brand 1 analysis...' : `Crawling website for ${brandName} products...`
+          }
+        }
+      });
       
       // Use Tavily crawl to get comprehensive product data for the specific brand
       const crawlResponse = await this.crawlTavily(
@@ -298,24 +545,117 @@ class TavilyService {
       
       console.log('Tavily crawl response for products:', crawlResponse);
 
+      // Update progress - processing results
+      this.emitProgress({
+        status: statusKey,
+        currentStep: `Processing ${brandName} product data...`,
+        currentBrandBeingAnalyzed: brandName,
+        progress: progressBase + 5,
+        steps: {
+          brandDiscovery: { status: 'completed', brandsFound: 0, message: 'Brand discovery completed' },
+          brand1Analysis: { 
+            status: isBrand1 ? 'in-progress' : 'pending', 
+            productsFound: 0, 
+            message: isBrand1 ? `Analyzing crawled data for ${brandName} products...` : 'Waiting for Brand 1 analysis...'
+          },
+          brand2Analysis: { 
+            status: isBrand1 ? 'pending' : 'in-progress', 
+            productsFound: 0, 
+            message: isBrand1 ? 'Waiting for Brand 1 analysis...' : `Analyzing crawled data for ${brandName} products...`
+          }
+        }
+      });
+
       // Extract product information from crawl results
       const products = this.extractProductsFromCrawl(crawlResponse, brandName);
       
-      if (products.length > 0) {
-        return category ? products.filter(p => p.category.toLowerCase().includes(category.toLowerCase())) : products;
+      // Update progress with found products
+      const finalProducts = category ? products.filter(p => p.category.toLowerCase().includes(category.toLowerCase())) : products;
+      
+      this.emitProgress({
+        status: statusKey,
+        currentStep: `Found ${finalProducts.length} products for ${brandName}`,
+        currentBrandBeingAnalyzed: brandName,
+        progress: progressBase + 8,
+        [isBrand1 ? 'brand1ProductsFound' : 'brand2ProductsFound']: finalProducts.length,
+        steps: {
+          brandDiscovery: { status: 'completed', brandsFound: 0, message: 'Brand discovery completed' },
+          brand1Analysis: { 
+            status: isBrand1 ? (finalProducts.length > 0 ? 'completed' : 'in-progress') : 'pending', 
+            productsFound: isBrand1 ? finalProducts.length : 0, 
+            message: isBrand1 ? 
+              (finalProducts.length > 0 ? `Successfully found ${finalProducts.length} products for ${brandName}` : `No products found for ${brandName}, trying fallback method...`) :
+              'Waiting for Brand 1 analysis...'
+          },
+          brand2Analysis: { 
+            status: isBrand1 ? 'pending' : (finalProducts.length > 0 ? 'completed' : 'in-progress'), 
+            productsFound: isBrand1 ? 0 : finalProducts.length, 
+            message: isBrand1 ? 'Waiting for Brand 1 analysis...' : 
+              (finalProducts.length > 0 ? `Successfully found ${finalProducts.length} products for ${brandName}` : `No products found for ${brandName}, trying fallback method...`)
+          }
+        }
+      });
+      
+      if (finalProducts.length > 0) {
+        return finalProducts;
       } else {
         // Fallback to search method if crawl doesn't yield results
         console.log('No products found in crawl results, trying search method');
-        return await this.searchProductsWithSearch(brandName, storeUrl, category);
+        
+        this.emitProgress({
+          status: statusKey,
+          currentStep: `Trying alternative search for ${brandName}...`,
+          currentBrandBeingAnalyzed: brandName,
+          progress: progressBase + 4,
+          steps: {
+            brandDiscovery: { status: 'completed', brandsFound: 0, message: 'Brand discovery completed' },
+            brand1Analysis: { 
+              status: isBrand1 ? 'in-progress' : 'pending', 
+              productsFound: 0, 
+              message: isBrand1 ? `Crawl failed for ${brandName}, trying search fallback...` : 'Waiting for Brand 1 analysis...'
+            },
+            brand2Analysis: { 
+              status: isBrand1 ? 'pending' : 'in-progress', 
+              productsFound: 0, 
+              message: isBrand1 ? 'Waiting for Brand 1 analysis...' : `Crawl failed for ${brandName}, trying search fallback...`
+            }
+          }
+        });
+        
+        return await this.searchProductsWithSearch(brandName, storeUrl, category, isBrand1);
       }
     } catch (error) {
       console.error('Error searching products with crawl:', error);
+      
+      const statusKey = isBrand1 ? 'analyzing-brand1' : 'analyzing-brand2';
+      const progressBase = isBrand1 ? 80 : 90;
+      
+      this.emitProgress({
+        status: statusKey,
+        currentStep: `Crawl failed for ${brandName}, trying search...`,
+        currentBrandBeingAnalyzed: brandName,
+        progress: progressBase + 2,
+        steps: {
+          brandDiscovery: { status: 'completed', brandsFound: 0, message: 'Brand discovery completed' },
+          brand1Analysis: { 
+            status: isBrand1 ? 'in-progress' : 'pending', 
+            productsFound: 0, 
+            message: isBrand1 ? `Crawl error for ${brandName}, trying search fallback...` : 'Waiting for Brand 1 analysis...'
+          },
+          brand2Analysis: { 
+            status: isBrand1 ? 'pending' : 'in-progress', 
+            productsFound: 0, 
+            message: isBrand1 ? 'Waiting for Brand 1 analysis...' : `Crawl error for ${brandName}, trying search fallback...`
+          }
+        }
+      });
+      
       // Fallback to search method if crawl fails
-      return await this.searchProductsWithSearch(brandName, storeUrl, category);
+      return await this.searchProductsWithSearch(brandName, storeUrl, category, isBrand1);
     }
   }
 
-  private async searchProductsWithSearch(brandName: string, storeUrl: string, category?: string): Promise<Product[]> {
+  private async searchProductsWithSearch(brandName: string, storeUrl: string, category?: string, _isBrand1: boolean = true): Promise<Product[]> {
     try {
       const domain = new URL(storeUrl).hostname;
       const categoryFilter = category ? ` ${category}` : '';
@@ -334,12 +674,6 @@ class TavilyService {
   private extractProductsFromCrawl(crawlResponse: TavilyCrawlResponse, brandName: string): Product[] {
     const products: Product[] = [];
     const content = crawlResponse.content.toLowerCase();
-    
-    const categories = [
-      'Body Parts', 'Brake System', 'Cooling System', 'Electrical',
-      'Engine Parts', 'Exhaust System', 'Filters', 'Steering',
-      'Suspension', 'Transmission'
-    ];
 
     // Common automotive product types
     const productTypes = [
@@ -379,7 +713,8 @@ class TavilyService {
           category: productType.category,
           price: price,
           availability: Math.random() > 0.2 ? 'Available' : 'Out of Stock',
-          link: `https://bobistheoilguy.com/forums/threads/${productType.name.replace(/\s+/g, '-')}-${brandName.toLowerCase().replace(/\s+/g, '-')}.${Math.floor(Math.random() * 900000) + 100000}/`
+          brand: brandName,
+          url: `https://bobistheoilguy.com/forums/threads/${productType.name.replace(/\s+/g, '-')}-${brandName.toLowerCase().replace(/\s+/g, '-')}.${Math.floor(Math.random() * 900000) + 100000}/`
         });
       }
     });
@@ -401,7 +736,8 @@ class TavilyService {
               category: productType.category,
               price: price,
               availability: Math.random() > 0.2 ? 'Available' : 'Out of Stock',
-              link: `https://bobistheoilguy.com/forums/threads/${productType.name.replace(/\s+/g, '-')}-${brandName.toLowerCase().replace(/\s+/g, '-')}.${Math.floor(Math.random() * 900000) + 100000}/`
+              brand: brandName,
+              url: `https://bobistheoilguy.com/forums/threads/${productType.name.replace(/\s+/g, '-')}-${brandName.toLowerCase().replace(/\s+/g, '-')}.${Math.floor(Math.random() * 900000) + 100000}/`
             });
           }
         });
@@ -541,15 +877,6 @@ class TavilyService {
     };
 
     return categoryProducts[category] || ['Component', 'Part', 'Assembly'];
-  }
-
-  private generateProductCode(): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let result = '';
-    for (let i = 0; i < 6; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
   }
 }
 

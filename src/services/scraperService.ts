@@ -1,4 +1,5 @@
-import type { Brand, Product, GapAnalysisResult } from '../types';
+import type { Brand, Product, GapAnalysisResult, AnalysisProgress } from '../types';
+import { tavilyService } from './tavilyService';
 
 // Mock data for demonstration - in a real app, this would scrape actual websites
 const MOCK_BRANDS: Brand[] = [
@@ -82,6 +83,152 @@ export class ScraperService {
     }
     
     return products;
+  }
+
+  static async performComprehensiveAnalysis(
+    storeUrl: string,
+    brand1Name: string,
+    brand2Name: string,
+    onProgress?: (progress: AnalysisProgress) => void
+  ): Promise<GapAnalysisResult> {
+    // Set up progress callback
+    if (onProgress) {
+      tavilyService.setProgressCallback(onProgress);
+    }
+
+    try {
+      // Step 1: Discover brands
+      onProgress?.({
+        status: 'discovering-brands',
+        currentStep: 'Discovering available brands...',
+        progress: 0,
+        brand1Progress: 0,
+        brand2Progress: 0,
+        brandsFound: 0,
+        totalBrandsExpected: 10,
+        brand1ProductsFound: 0,
+        brand2ProductsFound: 0,
+        steps: {
+          brandDiscovery: { status: 'in-progress', brandsFound: 0, message: 'Starting brand discovery...' },
+          brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' },
+          brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for brand discovery...' }
+        }
+      });
+
+      const brands = await tavilyService.discoverBrandsDeepDive(storeUrl);
+      
+      // Find the requested brands
+      const brand1 = brands.find(b => b.name.toLowerCase().includes(brand1Name.toLowerCase())) || 
+                    { id: 'brand1', name: brand1Name, website: storeUrl };
+      const brand2 = brands.find(b => b.name.toLowerCase().includes(brand2Name.toLowerCase())) || 
+                    { id: 'brand2', name: brand2Name, website: storeUrl };
+
+      // Step 2: Analyze Brand 1 products
+      onProgress?.({
+        status: 'analyzing-brand1',
+        currentStep: `Analyzing ${brand1.name} products...`,
+        progress: 80,
+        brand1Progress: 0,
+        brand2Progress: 0,
+        brandsFound: brands.length,
+        totalBrandsExpected: 10,
+        brand1ProductsFound: 0,
+        brand2ProductsFound: 0,
+        currentBrandBeingAnalyzed: brand1.name,
+        steps: {
+          brandDiscovery: { status: 'completed', brandsFound: brands.length, message: `Found ${brands.length} brands` },
+          brand1Analysis: { status: 'in-progress', productsFound: 0, message: `Starting analysis for ${brand1.name}...` },
+          brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting for Brand 1 analysis...' }
+        }
+      });
+
+      const brand1Products = await tavilyService.searchProducts(brand1.name, storeUrl, undefined, true);
+
+      // Step 3: Analyze Brand 2 products
+      onProgress?.({
+        status: 'analyzing-brand2',
+        currentStep: `Analyzing ${brand2.name} products...`,
+        progress: 90,
+        brand1Progress: 100,
+        brand2Progress: 0,
+        brandsFound: brands.length,
+        totalBrandsExpected: 10,
+        brand1ProductsFound: brand1Products.length,
+        brand2ProductsFound: 0,
+        currentBrandBeingAnalyzed: brand2.name,
+        steps: {
+          brandDiscovery: { status: 'completed', brandsFound: brands.length, message: `Found ${brands.length} brands` },
+          brand1Analysis: { status: 'completed', productsFound: brand1Products.length, message: `Found ${brand1Products.length} products for ${brand1.name}` },
+          brand2Analysis: { status: 'in-progress', productsFound: 0, message: `Starting analysis for ${brand2.name}...` }
+        }
+      });
+
+      const brand2Products = await tavilyService.searchProducts(brand2.name, storeUrl, undefined, false);
+
+      // Step 4: Finalize analysis
+      onProgress?.({
+        status: 'finalizing',
+        currentStep: 'Finalizing gap analysis...',
+        progress: 95,
+        brand1Progress: 100,
+        brand2Progress: 100,
+        brandsFound: brands.length,
+        totalBrandsExpected: 10,
+        brand1ProductsFound: brand1Products.length,
+        brand2ProductsFound: brand2Products.length,
+        steps: {
+          brandDiscovery: { status: 'completed', brandsFound: brands.length, message: `Found ${brands.length} brands` },
+          brand1Analysis: { status: 'completed', productsFound: brand1Products.length, message: `Found ${brand1Products.length} products for ${brand1.name}` },
+          brand2Analysis: { status: 'completed', productsFound: brand2Products.length, message: `Found ${brand2Products.length} products for ${brand2.name}` }
+        }
+      });
+
+      // Perform gap analysis
+      const result = this.analyzeGap(brand1Products, brand2Products);
+
+      // Final completion
+      onProgress?.({
+        status: 'completed',
+        currentStep: 'Analysis completed successfully!',
+        progress: 100,
+        brand1Progress: 100,
+        brand2Progress: 100,
+        brandsFound: brands.length,
+        totalBrandsExpected: 10,
+        brand1ProductsFound: brand1Products.length,
+        brand2ProductsFound: brand2Products.length,
+        steps: {
+          brandDiscovery: { status: 'completed', brandsFound: brands.length, message: `Found ${brands.length} brands` },
+          brand1Analysis: { status: 'completed', productsFound: brand1Products.length, message: `Analysis completed for ${brand1.name}` },
+          brand2Analysis: { status: 'completed', productsFound: brand2Products.length, message: `Analysis completed for ${brand2.name}` }
+        }
+      });
+
+      return result;
+
+    } catch (error) {
+      console.error('Analysis error:', error);
+      
+      onProgress?.({
+        status: 'error',
+        currentStep: 'Analysis failed',
+        progress: 0,
+        brand1Progress: 0,
+        brand2Progress: 0,
+        brandsFound: 0,
+        totalBrandsExpected: 10,
+        brand1ProductsFound: 0,
+        brand2ProductsFound: 0,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        steps: {
+          brandDiscovery: { status: 'error', brandsFound: 0, message: 'Analysis failed' },
+          brand1Analysis: { status: 'error', productsFound: 0, message: 'Analysis failed' },
+          brand2Analysis: { status: 'error', productsFound: 0, message: 'Analysis failed' }
+        }
+      });
+
+      throw error;
+    }
   }
 
   static analyzeGap(brand1Products: Product[], brand2Products: Product[]): GapAnalysisResult {
