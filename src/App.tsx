@@ -6,7 +6,7 @@ import { BrandSelector } from './components/BrandSelector';
 import { ProgressBar } from './components/ProgressBar';
 import { AnalysisResults } from './components/AnalysisResults';
 import UrlInput from './components/UrlInput';
-import { Play, RefreshCw, AlertCircle } from 'lucide-react';
+import { Play, RefreshCw, AlertCircle, Search } from 'lucide-react';
 
 function App() {
   const [storeUrl, setStoreUrl] = useState<string>('');
@@ -20,7 +20,16 @@ function App() {
     currentStep: '',
     progress: 0,
     brand1Progress: 0,
-    brand2Progress: 0
+    brand2Progress: 0,
+    brandsFound: 0,
+    totalBrandsExpected: 10,
+    brand1ProductsFound: 0,
+    brand2ProductsFound: 0,
+    steps: {
+      brandDiscovery: { status: 'pending', brandsFound: 0, message: 'Waiting to start...' },
+      brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting to start...' },
+      brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting to start...' }
+    }
   });
   const [analysisResult, setAnalysisResult] = useState<GapAnalysisResult | null>(null);
 
@@ -34,15 +43,12 @@ function App() {
     setIsUsingFallbackData(false);
 
     try {
-      const discoveredBrands = await tavilyService.discoverBrands(url);
+      // Use the new smart brand discovery approach
+      const discoveredBrands = await tavilyService.getTopAutomotiveBrands();
       setBrands(discoveredBrands);
-      
-      // Check if we're using fallback brands (they have specific IDs)
-      const usingFallback = discoveredBrands.some(brand => brand.id.startsWith('brand_') && 
-        ['Bosch', 'Continental', 'Valeo', 'MAHLE', 'SACHS', 'febi bilstein', 'MANN-FILTER', 'PIERBURG'].includes(brand.name));
-      setIsUsingFallbackData(usingFallback);
+      setIsUsingFallbackData(false);
     } catch (error) {
-      console.error('Error discovering brands:', error);
+      console.error('Error getting top automotive brands:', error);
       // Fallback to mock brands if discovery fails
       setBrands(ScraperService.getBrands());
       setIsUsingFallbackData(true);
@@ -51,71 +57,66 @@ function App() {
     }
   }, []);
 
+  const handleDeepDive = useCallback(async () => {
+    if (!storeUrl) return;
+    
+    setIsDiscoveringBrands(true);
+    setBrands([]);
+    setSelectedBrand1(null);
+    setSelectedBrand2(null);
+    setAnalysisResult(null);
+
+    try {
+      const discoveredBrands = await tavilyService.discoverBrandsDeepDive(storeUrl);
+      setBrands(discoveredBrands);
+      
+      // Check if we're using fallback brands (they have specific IDs)
+      const usingFallback = discoveredBrands.some(brand => brand.id.startsWith('brand_') && 
+        ['Bosch', 'Continental', 'Valeo', 'MAHLE', 'SACHS', 'febi bilstein', 'MANN-FILTER', 'PIERBURG'].includes(brand.name));
+      setIsUsingFallbackData(usingFallback);
+    } catch (error) {
+      console.error('Error discovering brands with deep dive:', error);
+      // Fallback to mock brands if discovery fails
+      setBrands(ScraperService.getBrands());
+      setIsUsingFallbackData(true);
+    } finally {
+      setIsDiscoveringBrands(false);
+    }
+  }, [storeUrl]);
+
   const runAnalysis = useCallback(async () => {
     if (!selectedBrand1 || !selectedBrand2 || !storeUrl) {
       return;
     }
 
     setAnalysisResult(null);
+    
+    // Reset progress to initial state
     setProgress({
-      status: 'scraping',
-      currentStep: 'Starting analysis...',
+      status: 'idle',
+      currentStep: 'Preparing analysis...',
       progress: 0,
       brand1Progress: 0,
-      brand2Progress: 0
+      brand2Progress: 0,
+      brandsFound: 0,
+      totalBrandsExpected: 10,
+      brand1ProductsFound: 0,
+      brand2ProductsFound: 0,
+      steps: {
+        brandDiscovery: { status: 'pending', brandsFound: 0, message: 'Waiting to start...' },
+        brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting to start...' },
+        brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting to start...' }
+      }
     });
 
     try {
-      // Scrape products from both brands using Tavily
-      setProgress(prev => ({
-        ...prev,
-        currentStep: `Searching products from ${selectedBrand1.name} and ${selectedBrand2.name} on ${new URL(storeUrl).hostname}...`
-      }));
-
-      // Simulate progressive loading for better UX
-      const brand1ProductsPromise = (async () => {
-        const products = await tavilyService.searchProducts(selectedBrand1.name, storeUrl);
-        setProgress(prev => ({
-          ...prev,
-          brand1Progress: 100,
-          progress: (100 + prev.brand2Progress) / 2
-        }));
-        return products;
-      })();
-
-      const brand2ProductsPromise = (async () => {
-        const products = await tavilyService.searchProducts(selectedBrand2.name, storeUrl);
-        setProgress(prev => ({
-          ...prev,
-          brand2Progress: 100,
-          progress: (prev.brand1Progress + 100) / 2
-        }));
-        return products;
-      })();
-
-      const [brand1Products, brand2Products] = await Promise.all([
-        brand1ProductsPromise,
-        brand2ProductsPromise
-      ]);
-
-      setProgress(prev => ({
-        ...prev,
-        status: 'analyzing',
-        currentStep: 'Analyzing product gaps...',
-        progress: 90
-      }));
-
-      // Simulate analysis delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      const result = ScraperService.analyzeGap(brand1Products, brand2Products);
-      
-      setProgress(prev => ({
-        ...prev,
-        status: 'completed',
-        currentStep: 'Analysis completed!',
-        progress: 100
-      }));
+      // Use the comprehensive analysis method with real-time progress updates
+      const result = await ScraperService.performComprehensiveAnalysis(
+        storeUrl,
+        selectedBrand1.name,
+        selectedBrand2.name,
+        setProgress
+      );
 
       setAnalysisResult(result);
 
@@ -135,13 +136,23 @@ function App() {
       currentStep: '',
       progress: 0,
       brand1Progress: 0,
-      brand2Progress: 0
+      brand2Progress: 0,
+      brandsFound: 0,
+      totalBrandsExpected: 10,
+      brand1ProductsFound: 0,
+      brand2ProductsFound: 0,
+      steps: {
+        brandDiscovery: { status: 'pending', brandsFound: 0, message: 'Waiting to start...' },
+        brand1Analysis: { status: 'pending', productsFound: 0, message: 'Waiting to start...' },
+        brand2Analysis: { status: 'pending', productsFound: 0, message: 'Waiting to start...' }
+      }
     });
     setAnalysisResult(null);
   };
 
   const canRunAnalysis = selectedBrand1 && selectedBrand2 && selectedBrand1.id !== selectedBrand2.id && storeUrl;
-  const isRunning = progress.status === 'scraping' || progress.status === 'analyzing';
+  const isRunning = progress.status === 'discovering-brands' || progress.status === 'analyzing-brand1' || 
+                   progress.status === 'analyzing-brand2' || progress.status === 'finalizing';
 
   return (
     <div className="container">
@@ -161,13 +172,26 @@ function App() {
         <UrlInput onUrlSubmit={handleUrlSubmit} isLoading={isDiscoveringBrands} />
       </div>
 
+      {/* Smart Brands Notice */}
+      {!isUsingFallbackData && brands.length > 0 && (
+        <div className="card" style={{backgroundColor: '#dcfce7', borderColor: '#16a34a'}}>
+          <div className="flex items-center text-green-800">
+            <AlertCircle style={{marginRight: '0.5rem'}} size={20} />
+            <div>
+              <strong>Smart Brand Discovery:</strong> Showing top automotive spare parts brands. 
+              Use "Deep Dive" to discover all brands specifically available on {storeUrl ? new URL(storeUrl).hostname : 'the website'}.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Fallback Data Notice */}
       {isUsingFallbackData && brands.length > 0 && (
         <div className="card" style={{backgroundColor: '#fef3c7', borderColor: '#f59e0b'}}>
           <div className="flex items-center text-amber-800">
             <AlertCircle style={{marginRight: '0.5rem'}} size={20} />
             <div>
-              <strong>Demo Mode:</strong> Unable to fetch live data from the website. 
+              <strong>Demo Mode:</strong> Unable to fetch live data. 
               Using sample automotive brands for demonstration. The analysis will use simulated product data.
             </div>
           </div>
@@ -216,6 +240,27 @@ function App() {
             )}
           </button>
 
+          {storeUrl && !isRunning && (
+            <button
+              onClick={handleDeepDive}
+              disabled={isDiscoveringBrands}
+              className="btn btn-secondary"
+              title="Discover all brands available on the website (takes longer)"
+            >
+              {isDiscoveringBrands ? (
+                <>
+                  <div className="loading-spinner" style={{marginRight: '0.5rem'}}></div>
+                  Deep Diving...
+                </>
+              ) : (
+                <>
+                  <Search style={{marginRight: '0.5rem'}} size={20} />
+                  Deep Dive
+                </>
+              )}
+            </button>
+          )}
+
           {(progress.status === 'completed' || progress.status === 'error') && (
             <button
               onClick={resetAnalysis}
@@ -238,34 +283,7 @@ function App() {
 
       {/* Progress Section */}
       {progress.status !== 'idle' && (
-        <div className="card">
-          <h3 className="text-lg font-semibold" style={{marginBottom: '1rem'}}>Analysis Progress</h3>
-          
-          <div>
-            <div className="text-gray-600" style={{marginBottom: '0.5rem', fontSize: '0.875rem'}}>{progress.currentStep}</div>
-            <ProgressBar progress={progress.progress} />
-          </div>
-
-          {progress.status === 'scraping' && (
-            <div className="grid grid-cols-2" style={{marginTop: '1rem'}}>
-              <ProgressBar 
-                progress={progress.brand1Progress} 
-                label={`${selectedBrand1?.name} Products`}
-              />
-              <ProgressBar 
-                progress={progress.brand2Progress} 
-                label={`${selectedBrand2?.name} Products`}
-              />
-            </div>
-          )}
-
-          {progress.status === 'error' && progress.error && (
-            <div className="flex items-center text-red-600 bg-red-50" style={{padding: '0.75rem', borderRadius: '8px', marginTop: '1rem'}}>
-              <AlertCircle style={{marginRight: '0.5rem'}} size={20} />
-              <span>{progress.error}</span>
-            </div>
-          )}
-        </div>
+        <ProgressBar progress={progress} />
       )}
 
       {/* Results Section */}

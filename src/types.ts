@@ -39,10 +39,36 @@ export interface GapAnalysisResult {
 }
 
 export interface AnalysisProgress {
-  status: 'idle' | 'scraping' | 'analyzing' | 'completed' | 'error';
+  status: 'idle' | 'discovering-brands' | 'analyzing-brand1' | 'analyzing-brand2' | 'finalizing' | 'completed' | 'error';
   currentStep: string;
   progress: number;
   brand1Progress: number;
   brand2Progress: number;
   error?: string;
+  
+  // Detailed progress information
+  brandsFound: number;
+  totalBrandsExpected: number;
+  brand1ProductsFound: number;
+  brand2ProductsFound: number;
+  currentBrandBeingAnalyzed?: string;
+  
+  // Step-by-step details
+  steps: {
+    brandDiscovery: {
+      status: 'pending' | 'in-progress' | 'completed' | 'error';
+      brandsFound: number;
+      message: string;
+    };
+    brand1Analysis: {
+      status: 'pending' | 'in-progress' | 'completed' | 'error';
+      productsFound: number;
+      message: string;
+    };
+    brand2Analysis: {
+      status: 'pending' | 'in-progress' | 'completed' | 'error';
+      productsFound: number;
+      message: string;
+    };
+  };
 }
