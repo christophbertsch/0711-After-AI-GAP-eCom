@@ -139,8 +139,8 @@ class TavilyService {
       const brands: Brand[] = brandNames.map((name, index) => ({
         id: `brand_${index + 1}`,
         name: name,
+        website: '', // Smart discovery doesn't provide specific websites
         description: `Leading automotive parts manufacturer`,
-        productCount: 0,
         categories: []
       }));
 
@@ -195,8 +195,8 @@ class TavilyService {
     return fallbackBrands.map((name, index) => ({
       id: `brand_${index + 1}`,
       name: name,
+      website: '', // Fallback brands don't have specific websites
       description: `Leading automotive parts manufacturer`,
-      productCount: 0,
       categories: []
     }));
   }
